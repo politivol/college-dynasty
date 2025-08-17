@@ -1,0 +1,244 @@
+generator client { provider = "prisma-client-js" }
+datasource db { provider = "postgresql"; url = env("DATABASE_URL") }
+
+enum MemberRole { OWNER ADMIN USER }
+enum RecruitStatus { ACTIVE COMMITTED SIGNED REMOVED }
+enum ImportType { ROSTER RECRUITING }
+enum ImportStatus { UPLOADED PROCESSING PARSED REVIEWED COMMITTED FAILED }
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  image     String?
+  dynasties DynastyMember[]
+  posts     Post[]
+  likes     Like[]
+  comments  Comment[]
+  votes     PollVote[]
+  importBatches ImportBatch[] @relation("ImportCreatedBy")
+  createdAt DateTime @default(now())
+}
+
+model Dynasty {
+  id        String   @id @default(cuid())
+  name      String
+  season    Int       @default(1)
+  members   DynastyMember[]
+  teams     Team[]
+  games     Game[]
+  feed      Post[]
+  polls     Poll[]
+  imports   ImportBatch[]
+  createdAt DateTime  @default(now())
+}
+
+model DynastyMember {
+  id        String  @id @default(cuid())
+  userId    String
+  dynastyId String
+  role      MemberRole @default(USER)
+  user      User    @relation(fields: [userId], references: [id])
+  dynasty   Dynasty @relation(fields: [dynastyId], references: [id])
+}
+
+model Team {
+  id        String   @id @default(cuid())
+  dynastyId String
+  name      String
+  mascot    String?
+  abbrev    String?     // e.g., "OSU"
+  coach     Coach?
+  players   Player[]
+  seasons   TeamSeason[]
+  dynasty   Dynasty  @relation(fields: [dynastyId], references: [id])
+  imports   ImportBatch[]
+}
+
+model Coach {
+  id        String   @id @default(cuid())
+  teamId    String   @unique
+  name      String
+  level     Int      @default(1)
+  scheme    String?
+  recordW   Int      @default(0)
+  recordL   Int      @default(0)
+  team      Team     @relation(fields: [teamId], references: [id])
+}
+
+model Player {
+  id        String   @id @default(cuid())
+  teamId    String?
+  name      String
+  position  String   // QB, RB, WR, etc.
+  year      String?  // FR, SO, JR, SR
+  ovr       Int?
+  attrs     Json?    // speed, acc, etc.
+  team      Team?    @relation(fields: [teamId], references: [id])
+}
+
+model TeamSeason {
+  id        String   @id @default(cuid())
+  teamId    String
+  season    Int
+  recordW   Int @default(0)
+  recordL   Int @default(0)
+  stats     Json
+  team      Team   @relation(fields: [teamId], references: [id])
+  @@unique([teamId, season])
+}
+
+model Game {
+  id        String   @id @default(cuid())
+  dynastyId String
+  season    Int
+  week      Int
+  homeTeam  String
+  awayTeam  String
+  homeScore Int?
+  awayScore Int?
+  playedAt  DateTime?
+  notes     String?
+  dynasty   Dynasty  @relation(fields: [dynastyId], references: [id])
+}
+
+model RecruitTarget {
+  id          String  @id @default(cuid())
+  dynastyId   String
+  name        String
+  position    String
+  stars       Int
+  interest    Json      // map of TeamId -> points/visit/lead
+  status      RecruitStatus @default(ACTIVE)
+  commitTeamId String?
+  portal      Boolean  @default(false) // true if in transfer portal
+  dynasty     Dynasty @relation(fields: [dynastyId], references: [id])
+}
+
+model Offer {
+  id        String  @id @default(cuid())
+  teamId    String
+  recruitId String
+  amount    Int?
+  pitch     String?
+  team      Team     @relation(fields: [teamId], references: [id])
+  recruit   RecruitTarget @relation(fields: [recruitId], references: [id])
+  @@unique([teamId, recruitId])
+}
+
+model Post {
+  id        String   @id @default(cuid())
+  dynastyId String
+  authorId  String
+  title     String
+  body      String?
+  images    Json      // array of URLs
+  createdAt DateTime  @default(now())
+  dynasty   Dynasty   @relation(fields: [dynastyId], references: [id])
+  author    User      @relation(fields: [authorId], references: [id])
+  likes     Like[]
+  comments  Comment[]
+}
+
+model Comment {
+  id        String  @id @default(cuid())
+  postId    String
+  authorId  String
+  body      String
+  createdAt DateTime @default(now())
+  post      Post   @relation(fields: [postId], references: [id])
+  author    User   @relation(fields: [authorId], references: [id])
+}
+
+model Like {
+  id        String @id @default(cuid())
+  postId    String
+  userId    String
+  post      Post @relation(fields: [postId], references: [id])
+  user      User @relation(fields: [userId], references: [id])
+  @@unique([postId, userId])
+}
+
+model ImportBatch {
+  id          String       @id @default(cuid())
+  dynastyId   String
+  teamId      String?
+  type        ImportType
+  imageUrl    String
+  status      ImportStatus @default(UPLOADED)
+  parsedJson  Json?
+  error       String?
+  createdById String
+  createdAt   DateTime     @default(now())
+  dynasty     Dynasty      @relation(fields: [dynastyId], references: [id])
+  team        Team?        @relation(fields: [teamId], references: [id])
+  createdBy   User         @relation("ImportCreatedBy", fields: [createdById], references: [id])
+  ocrJob      OcrJob?
+  rosterRows  ParsedRosterRow[]
+  recruitRows ParsedRecruitRow[]
+}
+
+model OcrJob {
+  id         String      @id @default(cuid())
+  batchId    String      @unique
+  startedAt  DateTime    @default(now())
+  finishedAt DateTime?
+  engine     String      // "tesseract-js" | "cloud-vision" etc.
+  log        String?
+  batch      ImportBatch @relation(fields: [batchId], references: [id])
+}
+
+model ParsedRosterRow {
+  id        String      @id @default(cuid())
+  batchId   String
+  name      String
+  position  String
+  year      String?
+  ovr       Int?
+  attrs     Json?
+  batch     ImportBatch @relation(fields: [batchId], references: [id])
+}
+
+model ParsedRecruitRow {
+  id        String      @id @default(cuid())
+  batchId   String
+  name      String
+  position  String
+  stars     Int?
+  status    String?
+  interest  Json?
+  batch     ImportBatch @relation(fields: [batchId], references: [id])
+}
+
+model Poll {
+  id        String   @id @default(cuid())
+  dynastyId String
+  authorId  String
+  question  String
+  options   PollOption[]
+  closesAt  DateTime?
+  isClosed  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  dynasty   Dynasty  @relation(fields: [dynastyId], references: [id])
+  author    User     @relation(fields: [authorId], references: [id])
+}
+
+model PollOption {
+  id      String  @id @default(cuid())
+  pollId  String
+  text    String
+  votes   PollVote[]
+  poll    Poll    @relation(fields: [pollId], references: [id])
+}
+
+model PollVote {
+  id        String @id @default(cuid())
+  pollId    String
+  optionId  String
+  userId    String
+  createdAt DateTime @default(now())
+  poll      Poll       @relation(fields: [pollId], references: [id])
+  option    PollOption @relation(fields: [optionId], references: [id])
+  user      User       @relation(fields: [userId], references: [id])
+  @@unique([pollId, userId])
+}
